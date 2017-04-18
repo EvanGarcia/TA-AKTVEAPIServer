@@ -1,0 +1,17 @@
+# This is the basic Systemd service for the AKTVE API Server. It should be
+# placed at /etc/systemd/system/aktveapisvr.service and should be enabled in
+# order to allow Systemd to manage the AKTVE API Server.
+
+[Unit]
+Description=AKTVE API Server
+After=network.target
+
+[Service]
+Type=simple
+User=apiadmin
+WorkingDirectory=/opt/TA-AKTVEAPIServer
+ExecStart=/opt/TA-AKTVEAPIServer/ta-aktveapiserver > /dev/null & 2>&1
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target

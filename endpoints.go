@@ -203,6 +203,84 @@ func EndpointGETMe(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// EndpointPUTMe handles the "PUT /me" API endpoint.
+func EndpointPUTMe(w http.ResponseWriter, r *http.Request) {
+	// Retrieve the variables from the endpoint
+	vars := mux.Vars(r)
+
+	// Write the HTTP header for the response
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+
+	// Create the actual data response structs of the API call
+	type ReturnData struct {
+		Success	Success
+	}
+
+	// Create the response structs
+	var success Success = Success {Success: true, Error: ""}
+	var returnData ReturnData
+
+	// Process the API call
+	if (r.URL.Query().Get("token") == "") {
+		success.Success = false
+		success.Error = "Invalid API call. 'token' paramater is required."
+	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+		success.Success = false
+		success.Error = "Invalid API call. 'token' paramater must be a valid token."
+	} else {
+		var _ = vars
+		// (TODO: Actually save the image somewhere and update the database.)
+	}
+
+	// Combine the success and data structs so that they can be returned
+	returnData.Success = success
+
+	// Respond with the JSON-encoded return data
+	if err := json.NewEncoder(w).Encode(returnData); err != nil {
+		panic(err)
+	}
+}
+
+// EndpointDELETEMe handles the "DELETE /me" API endpoint.
+func EndpointDELETEMe(w http.ResponseWriter, r *http.Request) {
+	// Retrieve the variables from the endpoint
+	vars := mux.Vars(r)
+
+	// Write the HTTP header for the response
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+
+	// Create the actual data response structs of the API call
+	type ReturnData struct {
+		Success	Success
+	}
+
+	// Create the response structs
+	var success Success = Success {Success: true, Error: ""}
+	var returnData ReturnData
+
+	// Process the API call
+	if (r.URL.Query().Get("token") == "") {
+		success.Success = false
+		success.Error = "Invalid API call. 'token' paramater is required."
+	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+		success.Success = false
+		success.Error = "Invalid API call. 'token' paramater must be a valid token."
+	} else {
+		var _ = vars
+		// (TODO: Actually save the image somewhere and update the database.)
+	}
+
+	// Combine the success and data structs so that they can be returned
+	returnData.Success = success
+
+	// Respond with the JSON-encoded return data
+	if err := json.NewEncoder(w).Encode(returnData); err != nil {
+		panic(err)
+	}
+}
+
 // EndpointGETMeMatches handles the "GET /me/matches" API endpoint.
 func EndpointGETMeMatches(w http.ResponseWriter, r *http.Request) {
 	// Write the HTTP header for the response

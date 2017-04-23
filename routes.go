@@ -58,6 +58,18 @@ var routes = Routes{
         EndpointGETMe,
     },
     Route {
+        "PUTMe",
+        "PUT",
+        "/me",
+        EndpointPUTMe,
+    },
+    Route {
+        "DELETEMe",
+        "DELETE",
+        "/me",
+        EndpointDELETEMe,
+    },
+    Route {
         "GETMeMatches",
         "GET",
         "/me/matches",

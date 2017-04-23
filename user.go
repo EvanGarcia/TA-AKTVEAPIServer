@@ -10,9 +10,9 @@ type User struct {
     Name		string			`json:"name"`
     Age			int				`json:"age"`
     Interests	map[string]int	`json:"interests"`
-    Tags		[]string		`json:"string"`
-    Bio			string			`json:"string"`
-    Images		[]string		`json:"string"`
+    Tags		[]string		`json:"tags"`
+    Bio			string			`json:"bio"`
+    Images		[]string		`json:"images"`
     Matches     []Match         `json:"-"`  // (NOTE: We don't want to return matches every time a user struct is returned.)
     Latitude	float32			`json:"latitude"`
     Longitude	float32			`json:"longitude"`

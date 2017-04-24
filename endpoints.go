@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"labix.org/v2/mgo/bson"
 )
 
 // EndpointGETIndex handles the "GET /" API endpoint.
@@ -701,9 +702,10 @@ func EndpointGETUsersID(w http.ResponseWriter, r *http.Request) {
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		if num, err := strconv.Atoi(vars["user_id"]); err == nil {
-			if user, err := GetUser(num); err == nil {
-				data.User = user
-			} else {
+			// Attempt to get User from the database
+			c := gDatabase.db.DB(dbDB).C("users")
+			err = c.Find(bson.M{"id": num}).One(&data.User)
+			if err != nil {
 				success.Success = false
 				success.Error = "Invalid `user_id` provided to API call. User does not exist."
 			}

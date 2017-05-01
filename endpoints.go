@@ -25,8 +25,8 @@ func EndpointGETStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response of the API call
-    data := Status{Name: "AKTVE API Server", Status: "online", Version: 1.0}
-    data.Update()
+	data := Status{Name: "AKTVE API Server", Status: "online", Version: 1.0}
+	data.Update()
 
 	// Create a success response
 	success := Success{Success: true, Error: ""}
@@ -49,26 +49,56 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		Token	string  `json:"token,omitempty"`
+	type GenericData struct {
+		Token string `json:"token,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.FormValue("fb_userid") == "" || r.FormValue("fb_access_token") == "") {
+	if r.FormValue("fb_userid") == "" || r.FormValue("fb_access_token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'fb_userid' and 'fb_access_token' paramaters are required."
 	} else {
-		data.Token = "a1b2c3d4e5f6g7h8i9j"
+		// Attempt to get User from the database
+		var m bson.M
+		c := gDatabase.db.DB(dbDB).C("fb_links")
+		if num, err := strconv.Atoi(r.FormValue("fb_userid")); err == nil {
+			err := c.Find(bson.M{"fb_user_id": num}).One(&m)
+			if err != nil {
+				success.Success = false
+				success.Error = "Invalid `fb_userid` provided to API call. User does not exist."
+			} else {
+				// Switch to the sessions collection
+				c := gDatabase.db.DB(dbDB).C("sessions")
+
+				// Remove any old sessions for the user
+				c.RemoveAll(bson.M{"user_id": m["user_id"]})
+
+				// Generate a new access token (and regenerate it until it is
+				// a unique one)
+				for {
+					data.Token = GenerateToken() // (NOTE: This will get returned.)
+					if err := c.Find(bson.M{"token": data.Token}).One(&m); err != nil {
+						break
+					}
+				}
+
+				// Insert the new session into the collection
+				c.Insert(&Session{Token: data.Token, UserID: m["user_id"].(int)})
+			}
+		} else {
+			success.Success = false
+			success.Error = "Internal API error. Are you sure that `fb_userid` is a valid number?"
+		}
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -88,29 +118,29 @@ func EndpointGETMeSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		ShareLocation	bool	`json:"sharelocation,omitempty"`
-		FriendMen		bool	`json:"friendmen,omitempty"`
-		FriendWomen		bool	`json:"friendwomen,omitempty"`
-		DateMen			bool	`json:"datemen,omitempty"`
-		DateWomen		bool	`json:"datewomen,omitempty"`
+	type GenericData struct {
+		ShareLocation bool `json:"sharelocation,omitempty"`
+		FriendMen     bool `json:"friendmen,omitempty"`
+		FriendWomen   bool `json:"friendwomen,omitempty"`
+		DateMen       bool `json:"datemen,omitempty"`
+		DateWomen     bool `json:"datewomen,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -139,18 +169,18 @@ func EndpointPOSTMeSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Create the actual data response structs of the API call
 	type ReturnData struct {
-		Success	Success
+		Success Success
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -174,20 +204,20 @@ func EndpointGETMe(w http.ResponseWriter, r *http.Request) {
 
 	// Create the actual data response structs of the API call
 	type ReturnData struct {
-		Success	Success
-		Data	User
+		Success Success
+		Data    User
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data User
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -215,18 +245,18 @@ func EndpointPUTMe(w http.ResponseWriter, r *http.Request) {
 
 	// Create the actual data response structs of the API call
 	type ReturnData struct {
-		Success	Success
+		Success Success
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -254,18 +284,18 @@ func EndpointDELETEMe(w http.ResponseWriter, r *http.Request) {
 
 	// Create the actual data response structs of the API call
 	type ReturnData struct {
-		Success	Success
+		Success Success
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -289,25 +319,25 @@ func EndpointGETMeMatches(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		Matches	[]Match	`json:"matches"`
+	type GenericData struct {
+		Matches []Match `json:"matches"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -334,25 +364,25 @@ func EndpointGETMeMatchesID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		Match	Match	`json:"match,omitempty"`
+	type GenericData struct {
+		Match Match `json:"match,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -390,32 +420,32 @@ func EndpointPOSTMeMatchesIDMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Create the actual data response structs of the API call
 	type ReturnData struct {
-		Success	Success
+		Success Success
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
-	} else if (r.FormValue("message") == "") {
+	} else if r.FormValue("message") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'message' paramater must be provided in POST data."
 	} else {
 		if num, err := strconv.Atoi(vars["match_id"]); err == nil {
 			if index, err := gDemoUsers[0].GetMatchIndex(num); err == nil {
 				// Create the new message
-				message := Message {
-					ID: int(time.Now().Unix() << 32),
+				message := Message{
+					ID:       int(time.Now().Unix() << 32),
 					AuthorID: 0,
-					Message: r.FormValue("message"),
-					Date: time.Now().String(),
+					Message:  r.FormValue("message"),
+					Date:     time.Now().String(),
 				}
 
 				// Append it to the list of Messages
@@ -450,25 +480,25 @@ func EndpointGETMeMatchesIDMessages(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		Messages	[]Message	`json:"messages,omitempty"`
+	type GenericData struct {
+		Messages []Message `json:"messages,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -506,25 +536,25 @@ func EndpointGETMeMatchesIDMessagesID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		Message	Message	`json:"message,omitempty"`
+	type GenericData struct {
+		Message Message `json:"message,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -572,25 +602,25 @@ func EndpointGETMeMatchesIDMessagesAfterID(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		Messages	[]Message	`json:"messages,omitempty"`
+	type GenericData struct {
+		Messages []Message `json:"messages,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -638,21 +668,21 @@ func EndpointPUTMeImagesID(w http.ResponseWriter, r *http.Request) {
 
 	// Create the actual data response structs of the API call
 	type ReturnData struct {
-		Success	Success
+		Success Success
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
-	} else if (r.FormValue("image_data") == "") {
+	} else if r.FormValue("image_data") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'image_data' paramater must be provided in POST data."
 	} else {
@@ -679,25 +709,25 @@ func EndpointGETUsersID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		User	User	`json:"user,omitempty"`
+	type GenericData struct {
+		User User `json:"user,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -736,21 +766,21 @@ func EndpointPUTUsersIDFeeling(w http.ResponseWriter, r *http.Request) {
 
 	// Create the actual data response structs of the API call
 	type ReturnData struct {
-		Success	Success
+		Success Success
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
-	} else if (r.FormValue("feeling") != "like" && r.FormValue("feeling") != "dislike") {
+	} else if r.FormValue("feeling") != "like" && r.FormValue("feeling") != "dislike" {
 		success.Success = false
 		success.Error = "Invalid API call. 'feeling' paramater must either be 'like' or 'dislike'."
 	} else {
@@ -787,30 +817,30 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response structs of the API call
-    type GenericData struct {
-		PotentialUserIDs	[]int	`json:"potential_user_ids,omitempty"`
+	type GenericData struct {
+		PotentialUserIDs []int `json:"potential_user_ids,omitempty"`
 	}
 
 	type ReturnData struct {
-		Success	Success
-		Data	GenericData
+		Success Success
+		Data    GenericData
 	}
 
 	// Create the response structs
-	var success Success = Success {Success: true, Error: ""}
+	var success Success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
 	// Process the API call
-	if (r.URL.Query().Get("token") == "") {
+	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if (r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j") {
+	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		var _ = vars
-		data.PotentialUserIDs = []int { 1, 2 }
+		data.PotentialUserIDs = []int{1, 2}
 	}
 
 	// Combine the success and data structs so that they can be returned

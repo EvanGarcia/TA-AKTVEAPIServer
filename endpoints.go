@@ -71,29 +71,34 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 		// Attempt to get User from the database
 		var m bson.M
 		c := gDatabase.db.DB(dbDB).C("fb_links")
-		if num, err := strconv.Atoi(r.FormValue("fb_userid")); err == nil {
-			err := c.Find(bson.M{"fb_user_id": num}).One(&m)
+		if fbUserID, err := strconv.Atoi(r.FormValue("fb_userid")); err == nil {
+			err := c.Find(bson.M{"fb_user_id": fbUserID}).One(&m)
 			if err != nil {
+				// (TODO: Verify the fb_userid and fb_access_token can be used
+				// to access the Facebook API. If so, create a new User and
+				// associated Facebook Link in the database (and caches). If
+				// not, there is a problem.)
+
 				success.Success = false
 				success.Error = "Invalid `fb_userid` provided to API call. User does not exist."
 			} else {
-				// Switch to the sessions collection
-				c := gDatabase.db.DB(dbDB).C("sessions")
+				// (TODO: Verify that the fb_userid and fb_access_token can be
+				// used to access the Facebook API. If so, update the
+				// fb_access_token stored in the database for the User. If not,
+				// there is a problem.)
 
-				// Remove any old sessions for the user
-				c.RemoveAll(bson.M{"user_id": m["user_id"]})
+				// Update the Facebook Link's access token in the database
+				// (NOTE: We are assuming, at this point, potentially
+				// dangerously, that the User definitely has a valid Facebook
+				// linke with the provided Facebook User ID in the database.)
+				query := bson.M{"fb_user_id": fbUserID}
+				change := bson.M{"$set": bson.M{"fb_access_token": r.FormValue("fb_access_token")}}
+				_ = c.Update(query, change)
 
-				// Generate a new access token (and regenerate it until it is
-				// a unique one)
-				for {
-					data.Token = GenerateToken() // (NOTE: This will get returned.)
-					if err := c.Find(bson.M{"token": data.Token}).One(&m); err != nil {
-						break
-					}
-				}
-
-				// Insert the new session into the collection
-				c.Insert(&Session{Token: data.Token, UserID: m["user_id"].(int)})
+				// Create the new Session for the user and return their new API
+				// access token
+				session, _ := gSessionCache.CreateSession(m["user_id"].(int))
+				data.Token = session.Token
 			}
 		} else {
 			success.Success = false
@@ -132,7 +137,7 @@ func EndpointGETMeSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -140,15 +145,33 @@ func EndpointGETMeSettings(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		data.ShareLocation = true
-		data.FriendMen = true
-		data.FriendWomen = true
+		// Retrieve the User
+		// (NOTE: We are, possibly dangreously, assuming that if we have a
+		// valid session, a valid user definitely exists.)
+		user, _, _ := gUserCache.GetUser(userID)
+
+		// Parse out some settings from the User object
+		data.ShareLocation = user.ShareLocation
+
+		data.FriendMen = false
+		data.FriendWomen = false
 		data.DateMen = false
 		data.DateWomen = false
+		for _, element := range user.Tags {
+			if element == "friends_men" {
+				data.FriendMen = true
+			} else if element == "friends_women" {
+				data.FriendWomen = true
+			} else if element == "dates_men" {
+				data.DateMen = true
+			} else if element == "dates_women" {
+				data.DateWomen = true
+			}
+		}
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -173,18 +196,141 @@ func EndpointPOSTMeSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		// (TODO: Post the settings into the database.)
+		// Get the UserCache index for the User object's local representation
+		_, userCacheIndex, _ := gUserCache.GetUser(userID)
+
+		// Update the local representation of the User
+		if r.FormValue("sharelocation") == "true" {
+			gUserCache.Users[userCacheIndex].ShareLocation = true
+		} else if r.FormValue("sharelocation") == "false" {
+			gUserCache.Users[userCacheIndex].ShareLocation = false
+		}
+
+		if r.FormValue("friendmen") == "true" {
+			// See if the associated tag is in the User's tags list
+			found := false
+			for _, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "friends_men" {
+					// Stop looking
+					found = true
+					break
+				}
+			}
+
+			// If not found, add it to the User's tags list
+			if !found {
+				gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags, "friends_men")
+			}
+		} else if r.FormValue("friendmen") == "false" {
+			// See if the associated tag is in the User's tags list
+			for index, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "friends_men" {
+					// Remove the tag from the User's tags list
+					gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags[:index], gUserCache.Users[userCacheIndex].Tags[(index+1):]...)
+
+					// Stop looking
+					break
+				}
+			}
+		}
+
+		if r.FormValue("friendwomen") == "true" {
+			// See if the associated tag is in the User's tags list
+			found := false
+			for _, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "friends_women" {
+					// Stop looking
+					found = true
+					break
+				}
+			}
+
+			// If not found, add it to the User's tags list
+			if !found {
+				gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags, "friends_women")
+			}
+		} else if r.FormValue("friendwomen") == "false" {
+			// See if the associated tag is in the User's tags list
+			for index, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "friends_women" {
+					// Remove the tag from the User's tags list
+					gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags[:index], gUserCache.Users[userCacheIndex].Tags[(index+1):]...)
+
+					// Stop looking
+					break
+				}
+			}
+		}
+
+		if r.FormValue("datemen") == "true" {
+			// See if the associated tag is in the User's tags list
+			found := false
+			for _, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "dates_men" {
+					// Stop looking
+					found = true
+					break
+				}
+			}
+
+			// If not found, add it to the User's tags list
+			if !found {
+				gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags, "dates_men")
+			}
+		} else if r.FormValue("datemen") == "false" {
+			// See if the associated tag is in the User's tags list
+			for index, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "dates_men" {
+					// Remove the tag from the User's tags list
+					gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags[:index], gUserCache.Users[userCacheIndex].Tags[(index+1):]...)
+
+					// Stop looking
+					break
+				}
+			}
+		}
+
+		if r.FormValue("datewomen") == "true" {
+			// See if the associated tag is in the User's tags list
+			found := false
+			for _, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "dates_women" {
+					// Stop looking
+					found = true
+					break
+				}
+			}
+
+			// If not found, add it to the User's tags list
+			if !found {
+				gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags, "dates_women")
+			}
+		} else if r.FormValue("datewomen") == "false" {
+			// See if the associated tag is in the User's tags list
+			for index, element := range gUserCache.Users[userCacheIndex].Tags {
+				if element == "dates_women" {
+					// Remove the tag from the User's tags list
+					gUserCache.Users[userCacheIndex].Tags = append(gUserCache.Users[userCacheIndex].Tags[:index], gUserCache.Users[userCacheIndex].Tags[(index+1):]...)
+
+					// Stop looking
+					break
+				}
+			}
+		}
+
+		// Push the local representation of the User to the database
+		gUserCache.Users[userCacheIndex].Push()
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -209,7 +355,7 @@ func EndpointGETMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data User
 	var returnData ReturnData
 
@@ -217,11 +363,11 @@ func EndpointGETMe(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		data = gDemoUsers[0]
+		data, _, _ = gUserCache.GetUser(userID)
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -249,19 +395,59 @@ func EndpointPUTMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		var _ = vars
-		// (TODO: Actually save the image somewhere and update the database.)
+
+		// Get the User's position in the local cache
+		_, userCacheIndex, _ := gUserCache.GetUser(userID)
+
+		// Parse the recieved values into the current app User's local object
+		r.ParseForm()
+		for key, values := range r.Form {
+			for _, value := range values {
+				if key == "name" {
+					gUserCache.Users[userCacheIndex].Name = value
+				} else if key == "age" {
+					if num, err := strconv.Atoi(value); err == nil {
+						gUserCache.Users[userCacheIndex].Age = num
+					}
+				} else if key == "interests" {
+					gUserCache.Users[userCacheIndex].Interests = map[string]int{}
+					_ = json.Unmarshal([]byte(value), &gUserCache.Users[userCacheIndex].Interests)
+				} else if key == "tags" {
+					gUserCache.Users[userCacheIndex].Tags = []string{}
+					_ = json.Unmarshal([]byte(value), &gUserCache.Users[userCacheIndex].Tags)
+				} else if key == "bio" {
+					gUserCache.Users[userCacheIndex].Bio = value
+				} else if key == "images" {
+					gUserCache.Users[userCacheIndex].Images = []string{}
+					_ = json.Unmarshal([]byte(value), &gUserCache.Users[userCacheIndex].Images)
+				} else if key == "latitude" {
+					if num, err := strconv.ParseFloat(value, 32); err == nil {
+						gUserCache.Users[userCacheIndex].Latitude = float32(num)
+					}
+				} else if key == "longitude" {
+					if num, err := strconv.ParseFloat(value, 32); err == nil {
+						gUserCache.Users[userCacheIndex].Longitude = float32(num)
+					}
+				} else if key == "last_active" {
+					gUserCache.Users[userCacheIndex].LastActive = value
+				}
+			}
+		}
+
+		// Push the updated local object into the database
+		gUserCache.Users[userID].Push()
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -288,14 +474,14 @@ func EndpointDELETEMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if _, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
@@ -329,7 +515,7 @@ func EndpointGETMeMatches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -337,11 +523,13 @@ func EndpointGETMeMatches(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		data.Matches = gDemoUsers[0].Matches
+		// Retrieve the app User's Matches
+		user, _, _ := gUserCache.GetUser(userID)
+		data.Matches = user.Matches
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -374,7 +562,7 @@ func EndpointGETMeMatchesID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -382,12 +570,13 @@ func EndpointGETMeMatchesID(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		if num, err := strconv.Atoi(vars["match_id"]); err == nil {
-			if match, err := gDemoUsers[0].GetMatch(num); err == nil {
+		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
+			user, _, _ := gUserCache.GetUser(userID)
+			if match, err := user.GetMatch(matchID); err == nil {
 				data.Match = match
 			} else {
 				success.Success = false
@@ -424,22 +613,23 @@ func EndpointPOSTMeMatchesIDMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else if r.FormValue("message") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'message' paramater must be provided in POST data."
 	} else {
-		if num, err := strconv.Atoi(vars["match_id"]); err == nil {
-			if index, err := gDemoUsers[0].GetMatchIndex(num); err == nil {
+		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
+			user, userCacheIndex, _ := gUserCache.GetUser(userID)
+			if index, err := user.GetMatchIndex(matchID); err == nil {
 				// Create the new message
 				message := Message{
 					ID:       int(time.Now().Unix() << 32),
@@ -449,7 +639,7 @@ func EndpointPOSTMeMatchesIDMessage(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Append it to the list of Messages
-				gDemoUsers[0].Matches[index].Messages = append(gDemoUsers[0].Matches[index].Messages, message)
+				gUserCache.Users[userCacheIndex].Matches[index].Messages = append(gUserCache.Users[userCacheIndex].Matches[index].Messages, message)
 			} else {
 				success.Success = false
 				success.Error = "Invalid `match_id` provided to API call. Match does not exist for User."
@@ -490,7 +680,7 @@ func EndpointGETMeMatchesIDMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -498,12 +688,13 @@ func EndpointGETMeMatchesIDMessages(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		if num, err := strconv.Atoi(vars["match_id"]); err == nil {
-			if match, err := gDemoUsers[0].GetMatch(num); err == nil {
+		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
+			user, _, _ := gUserCache.GetUser(userID)
+			if match, err := user.GetMatch(matchID); err == nil {
 				data.Messages = match.Messages
 			} else {
 				success.Success = false
@@ -546,7 +737,7 @@ func EndpointGETMeMatchesIDMessagesID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -554,14 +745,15 @@ func EndpointGETMeMatchesIDMessagesID(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		if num, err := strconv.Atoi(vars["match_id"]); err == nil {
-			if match, err := gDemoUsers[0].GetMatch(num); err == nil {
-				if num, err := strconv.Atoi(vars["message_id"]); err == nil {
-					if message, err := match.GetMessage(num); err == nil {
+		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
+			user, _, _ := gUserCache.GetUser(userID)
+			if match, err := user.GetMatch(matchID); err == nil {
+				if messageID, err := strconv.Atoi(vars["message_id"]); err == nil {
+					if message, err := match.GetMessage(messageID); err == nil {
 						data.Message = message
 					} else {
 						success.Success = false
@@ -612,7 +804,7 @@ func EndpointGETMeMatchesIDMessagesAfterID(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -620,14 +812,15 @@ func EndpointGETMeMatchesIDMessagesAfterID(w http.ResponseWriter, r *http.Reques
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		if num, err := strconv.Atoi(vars["match_id"]); err == nil {
-			if match, err := gDemoUsers[0].GetMatch(num); err == nil {
-				if num, err := strconv.Atoi(vars["message_id"]); err == nil {
-					if index, err := match.GetMessageIndex(num); err == nil {
+		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
+			user, _, _ := gUserCache.GetUser(userID)
+			if match, err := user.GetMatch(matchID); err == nil {
+				if messageID, err := strconv.Atoi(vars["message_id"]); err == nil {
+					if index, err := match.GetMessageIndex(messageID); err == nil {
 						data.Messages = match.Messages[(index + 1):]
 					} else {
 						success.Success = false
@@ -672,14 +865,14 @@ func EndpointPUTMeImagesID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if _, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else if r.FormValue("image_data") == "" {
@@ -719,7 +912,7 @@ func EndpointGETUsersID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -727,15 +920,13 @@ func EndpointGETUsersID(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if _, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
-		if num, err := strconv.Atoi(vars["user_id"]); err == nil {
+		if id, err := strconv.Atoi(vars["user_id"]); err == nil {
 			// Attempt to get User from the database
-			c := gDatabase.db.DB(dbDB).C("users")
-			err = c.Find(bson.M{"id": num}).One(&data.User)
-			if err != nil {
+			if data.User, _, err = gUserCache.GetUser(id); err != nil {
 				success.Success = false
 				success.Error = "Invalid `user_id` provided to API call. User does not exist."
 			}
@@ -770,23 +961,24 @@ func EndpointPUTUsersIDFeeling(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var returnData ReturnData
 
 	// Process the API call
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else if r.FormValue("feeling") != "like" && r.FormValue("feeling") != "dislike" {
 		success.Success = false
 		success.Error = "Invalid API call. 'feeling' paramater must either be 'like' or 'dislike'."
 	} else {
-		if num, err := strconv.Atoi(vars["user_id"]); err == nil {
-			if user, err := GetUser(num); err == nil {
-				var _ = user
+		if otherUserID, err := strconv.Atoi(vars["user_id"]); err == nil {
+			user, userCacheIndex, _ := gUserCache.GetUser(userID)
+			if otherUser, otherUserCacheIndex, err := gUserCache.GetUser(otherUserID); err == nil {
+				var _, _, _, _ = user, userCacheIndex, otherUser, otherUserCacheIndex
 				// (TODO: Update the User's feeling and associated matches towards User.)
 			} else {
 				success.Success = false
@@ -827,7 +1019,7 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the response structs
-	var success Success = Success{Success: true, Error: ""}
+	var success = Success{Success: true, Error: ""}
 	var data GenericData
 	var returnData ReturnData
 
@@ -835,7 +1027,7 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if r.URL.Query().Get("token") != "a1b2c3d4e5f6g7h8i9j" {
+	} else if _, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {

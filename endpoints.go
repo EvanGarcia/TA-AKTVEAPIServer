@@ -810,7 +810,7 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		var _ = vars
-		data.PotentialUserIDs = []int { 3, 4, 5 }
+		data.PotentialUserIDs = []int { 2, 3, 4 }
 	}
 
 	// Combine the success and data structs so that they can be returned

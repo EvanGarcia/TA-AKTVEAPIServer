@@ -1011,10 +1011,42 @@ func EndpointPUTUsersIDFeeling(w http.ResponseWriter, r *http.Request) {
 		success.Error = "Invalid API call. 'feeling' paramater must either be 'like' or 'dislike'."
 	} else {
 		if otherUserID, err := strconv.Atoi(vars["user_id"]); err == nil {
-			user, userCacheIndex, _ := gUserCache.GetUser(userID)
-			if otherUser, otherUserCacheIndex, err := gUserCache.GetUser(otherUserID); err == nil {
-				var _, _, _, _ = user, userCacheIndex, otherUser, otherUserCacheIndex
-				// (TODO: Update the User's feeling and associated matches towards User.)
+			user, _, _ := gUserCache.GetUser(userID)
+			if otherUser, _, err := gUserCache.GetUser(otherUserID); err == nil {
+				if r.FormValue("feeling") == "like" {
+					// Switch to the "likes" database
+					c := gDatabase.db.DB(dbDB).C("likes")
+
+					// Get the latest Like from the database so that we know
+					// what the ID should be for this Like
+					var count int
+					var err error
+
+					if count, err = c.Count(); err != nil {
+						success.Success = false
+						success.Error = "Failed to add like."
+					}
+
+					// Create the new Like
+					like := Like{
+						ID:      count,
+						LikerID: user.ID,
+						LikeeID: otherUser.ID,
+					}
+
+					// Push the new Like up to the database
+					if err = c.Insert(&like); err != nil {
+						success.Success = false
+						success.Error = "Failed to add like."
+					}
+				} else if r.FormValue("feeling") != "dislike" {
+					// Remove any likes for the specified User by the User
+					c := gDatabase.db.DB(dbDB).C("likes")
+					if err := c.Remove(bson.M{"liker_id": userID, "likee_id": otherUserID}); err != nil {
+						success.Success = false
+						success.Error = "Failed to remove any specified likes."
+					}
+				}
 			} else {
 				success.Success = false
 				success.Error = "Invalid `user_id` provided to API call. User does not exist."

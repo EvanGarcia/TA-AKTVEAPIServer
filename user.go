@@ -89,3 +89,34 @@ func (o *UserCache) GetUser(userID int) (User, int, error) {
 
 	return user, (len(gUserCache.Users) - 1), nil
 }
+
+// DeleteUser literally deletes the User with the specified ID from both the
+// local cache and the database. It should be used for account deletion.
+func (o *UserCache) DeleteUser(userID int) error {
+	// Delete User from local cache
+	for index, element := range gUserCache.Users {
+		if element.ID == userID {
+			o.Users = append(o.Users[:index], o.Users[(index+1):]...)
+		}
+	}
+
+	// Delete User from database
+	c := gDatabase.db.DB(dbDB).C("users")
+	if err := c.Remove(bson.M{"id": userID}); err != nil {
+		return errors.New("failed to remove user from database")
+	}
+
+	// Delete all of the User's social media links from database
+	c = gDatabase.db.DB(dbDB).C("fb_links")
+	if err := c.Remove(bson.M{"user_id": userID}); err != nil {
+		return errors.New("failed to remove user's Facebook links from database")
+	}
+
+	// Delete all of the User's sessions from database
+	c = gDatabase.db.DB(dbDB).C("sessions")
+	if err := c.Remove(bson.M{"user_id": userID}); err != nil {
+		return errors.New("failed to remove user's sessions from database")
+	}
+
+	return nil
+}

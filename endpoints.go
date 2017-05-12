@@ -481,12 +481,15 @@ func EndpointDELETEMe(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if _, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		var _ = vars
-		// (TODO: Actually save the image somewhere and update the database.)
+
+		// Delete the User from the local cache and the database (WARNING: This
+		// is as final as it gets. The acount will be gone after this!)
+		gUserCache.DeleteUser(userID)
 	}
 
 	// Combine the success and data structs so that they can be returned

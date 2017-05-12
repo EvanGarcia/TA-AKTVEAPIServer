@@ -530,9 +530,12 @@ func EndpointGETMeMatches(w http.ResponseWriter, r *http.Request) {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
+		// Update the local cache of the User's matches
+		_, userCacheIndex, _ := gUserCache.GetUser(userID)
+		gUserCache.Users[userCacheIndex].PullMatches()
+
 		// Retrieve the app User's Matches
-		user, _, _ := gUserCache.GetUser(userID)
-		data.Matches = user.Matches
+		data.Matches = gUserCache.Users[userCacheIndex].Matches
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -578,8 +581,12 @@ func EndpointGETMeMatchesID(w http.ResponseWriter, r *http.Request) {
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
-			user, _, _ := gUserCache.GetUser(userID)
-			if match, err := user.GetMatch(matchID); err == nil {
+			// Update the local cache of the User's matches
+			_, userCacheIndex, _ := gUserCache.GetUser(userID)
+			gUserCache.Users[userCacheIndex].PullMatches()
+
+			// Retrieve the requested Match from the User
+			if match, err := gUserCache.Users[userCacheIndex].GetMatch(matchID); err == nil {
 				data.Match = match
 			} else {
 				success.Success = false
@@ -635,14 +642,15 @@ func EndpointPOSTMeMatchesIDMessage(w http.ResponseWriter, r *http.Request) {
 			if index, err := user.GetMatchIndex(matchID); err == nil {
 				// Create the new message
 				message := Message{
-					ID:       int(time.Now().Unix() << 32),
-					AuthorID: 0,
-					Message:  r.FormValue("message"),
-					Date:     time.Now().String(),
+					ID:           len(gUserCache.Users[userCacheIndex].Matches[index].Messages),
+					AuthorID:     0,
+					Message:      r.FormValue("message"),
+					Date:         time.Now().String(),
+					Participants: gUserCache.Users[userCacheIndex].Matches[index].Participants,
 				}
 
 				// Append it to the list of Messages
-				gUserCache.Users[userCacheIndex].Matches[index].Messages = append(gUserCache.Users[userCacheIndex].Matches[index].Messages, message)
+				gUserCache.Users[userCacheIndex].Matches[index].PutMessage(message)
 			} else {
 				success.Success = false
 				success.Error = "Invalid `match_id` provided to API call. Match does not exist for User."
@@ -696,9 +704,17 @@ func EndpointGETMeMatchesIDMessages(w http.ResponseWriter, r *http.Request) {
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
-			user, _, _ := gUserCache.GetUser(userID)
-			if match, err := user.GetMatch(matchID); err == nil {
-				data.Messages = match.Messages
+			// Retrieve the User and update their Matches
+			_, userCacheIndex, _ := gUserCache.GetUser(userID)
+			gUserCache.Users[userCacheIndex].PullMatches()
+
+			// Retrieve the Messages from the specified Match
+			if matchIndex, err := gUserCache.Users[userCacheIndex].GetMatchIndex(matchID); err == nil {
+				// Update the Match's Messages
+				gUserCache.Users[userCacheIndex].Matches[matchIndex].PullMessages()
+
+				// Return the Match's Messages
+				data.Messages = gUserCache.Users[userCacheIndex].Matches[matchIndex].Messages
 			} else {
 				success.Success = false
 				success.Error = "Invalid `match_id` provided to API call. Match does not exist for User."
@@ -753,10 +769,18 @@ func EndpointGETMeMatchesIDMessagesID(w http.ResponseWriter, r *http.Request) {
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
-			user, _, _ := gUserCache.GetUser(userID)
-			if match, err := user.GetMatch(matchID); err == nil {
+			// Retrieve the User and update their Matches
+			_, userCacheIndex, _ := gUserCache.GetUser(userID)
+			gUserCache.Users[userCacheIndex].PullMatches()
+
+			// Retrieve the specified Message of the specified Match
+			if matchIndex, err := gUserCache.Users[userCacheIndex].GetMatchIndex(matchID); err == nil {
 				if messageID, err := strconv.Atoi(vars["message_id"]); err == nil {
-					if message, err := match.GetMessage(messageID); err == nil {
+					// Update the Match's Messages
+					gUserCache.Users[userCacheIndex].Matches[matchIndex].PullMessages()
+
+					// Get the specified Message
+					if message, err := gUserCache.Users[userCacheIndex].Matches[matchIndex].GetMessage(messageID); err == nil {
 						data.Message = message
 					} else {
 						success.Success = false
@@ -820,11 +844,19 @@ func EndpointGETMeMatchesIDMessagesAfterID(w http.ResponseWriter, r *http.Reques
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		if matchID, err := strconv.Atoi(vars["match_id"]); err == nil {
-			user, _, _ := gUserCache.GetUser(userID)
-			if match, err := user.GetMatch(matchID); err == nil {
+			// Retrieve the User and update their Matches
+			_, userCacheIndex, _ := gUserCache.GetUser(userID)
+			gUserCache.Users[userCacheIndex].PullMatches()
+
+			// Retrieve the specified Message of the specified Match
+			if matchIndex, err := gUserCache.Users[userCacheIndex].GetMatchIndex(matchID); err == nil {
 				if messageID, err := strconv.Atoi(vars["message_id"]); err == nil {
-					if index, err := match.GetMessageIndex(messageID); err == nil {
-						data.Messages = match.Messages[(index + 1):]
+					// Update the Match's Messages
+					gUserCache.Users[userCacheIndex].Matches[matchIndex].PullMessages()
+
+					// Retrieve the specified Messages
+					if index, err := gUserCache.Users[userCacheIndex].Matches[matchIndex].GetMessageIndex(messageID); err == nil {
+						data.Messages = gUserCache.Users[userCacheIndex].Matches[matchIndex].Messages[(index + 1):]
 					} else {
 						success.Success = false
 						success.Error = "Invalid `message_id` provided to API call. Message does not exist for Match."

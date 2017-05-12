@@ -65,6 +65,39 @@ func (o *User) Push() error {
 	return err
 }
 
+// PullMatches updates the local User object with all of the actual Matches
+// between the given User and other Users.
+func (o *User) PullMatches() error {
+	var likes []Like
+	var like Like
+
+	// Switch to the "likes" collection
+	c := gDatabase.db.DB(dbDB).C("likes")
+
+	// Retrieve all likes of the User
+	if err := c.Find(bson.M{"likee_id": o.ID}).All(&likes); err != nil {
+		return errors.New("failed to retrieve Matches")
+	}
+
+	// Clear out the local cache of the User's Matches so that we can rebuild
+	// it (NOTE: This sucks and is terribly inefficient. One day, if we aren't
+	// lazy or exhausted, we should change how all of this works.)
+	o.Matches = o.Matches[:0]
+
+	// Figure out which ones are from Users that the User likes back
+	for _, element := range likes {
+		if err := c.Find(bson.M{"liker_id": o.ID, "likee_id": element.LikerID}).One(&like); err != nil {
+			return errors.New("could not retrieve Match")
+		}
+
+		// Construct a new Match for the located likes and append it to the
+		// User's slice of Matches
+		o.Matches = append(o.Matches, Match{ID: len(o.Matches), Participants: []int{o.ID, element.LikerID}})
+	}
+
+	return nil
+}
+
 // GetUser retrieves a copy of the User with the specified ID, along with their
 // associated UserCache index. If the User is not currently in the UserCache,
 // they are retrieved from the database and put into it. If no User is found,

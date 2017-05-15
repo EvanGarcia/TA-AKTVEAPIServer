@@ -1039,6 +1039,8 @@ func EndpointPUTUsersIDFeeling(w http.ResponseWriter, r *http.Request) {
 						success.Success = false
 						success.Error = "Failed to add like."
 					}
+
+					// (TODO: Add this like to any local caches.)
 				} else if r.FormValue("feeling") != "dislike" {
 					// Remove any likes for the specified User by the User
 					c := gDatabase.db.DB(dbDB).C("likes")
@@ -1046,6 +1048,8 @@ func EndpointPUTUsersIDFeeling(w http.ResponseWriter, r *http.Request) {
 						success.Success = false
 						success.Error = "Failed to remove any specified likes."
 					}
+
+					// (TODO: Remove this like from any local caches.)
 				}
 			} else {
 				success.Success = false

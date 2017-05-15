@@ -1250,11 +1250,13 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 
 			query["age"] = bson.M{"$lte": maxAge, "$gte": minAge}
 
-			queryInterests := []bson.M{}
-			for key := range user.Interests {
-				queryInterests = append(queryInterests, bson.M{"interests." + key: bson.M{"$exists": true}})
+			if len(user.Interests) > 0 {
+				queryInterests := []bson.M{}
+				for key := range user.Interests {
+					queryInterests = append(queryInterests, bson.M{"interests." + key: bson.M{"$exists": true}})
+				}
+				query["$or"] = queryInterests
 			}
-			query["$or"] = queryInterests
 
 			if err := c.Find(query).All(&users); err == nil {
 				// Update the User's Matches so that we can check against them

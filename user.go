@@ -1,99 +1,181 @@
 package main
 
 import (
-    "errors"
+	"errors"
+	"math"
+
+	"gopkg.in/mgo.v2/bson"
 )
 
 // User is a struct representing a User of AKTVE.
 type User struct {
-    ID			int				`json:"id"`
-    Name		string			`json:"name"`
-    Age			int				`json:"age"`
-    Interests	map[string]int	`json:"interests"`
-    Tags		[]string		`json:"tags"`
-    Bio			string			`json:"bio"`
-    Images		[]string		`json:"images"`
-    Matches     []Match         `json:"-"`  // (NOTE: We don't want to return matches every time a user struct is returned.)
-    Latitude	float32			`json:"latitude"`
-    Longitude	float32			`json:"longitude"`
-    LastActive	string			`json:"last_active"`
+	ID            int            `json:"id,omitempty" bson:"id"`
+	Name          string         `json:"name,omitempty" bson:"name"`
+	Age           int            `json:"age,omitempty" bson:"age"`
+	Interests     map[string]int `json:"interests,omitempty" bson:"interests"`
+	Tags          []string       `json:"tags,omitempty" bson:"tags"`
+	Bio           string         `json:"bio,omitempty" bson:"bio"`
+	Images        []string       `json:"images,omitempty" bson:"images"`
+	Matches       []Match        `json:"-" bson:"-"` // (NOTE: We don't want to return matches every time a user struct is returned.)
+	Latitude      float32        `json:"latitude,omitempty" bson:"latitude"`
+	Longitude     float32        `json:"longitude,omitempty" bson:"longitude"`
+	LastActive    string         `json:"last_active,omitempty" bson:"last_active"`
+	ShareLocation bool           `json:"share_location,omitempty" bson:"share_location"`
 }
+
+// UserCache is a local cache of User objects used to decrease the number of
+// back-and-forth trips between the database server and the API server.
+type UserCache struct {
+	Users []User
+}
+
+var gUserCache UserCache
 
 // GetMatch returns the Match with the given ID if the User has one.
 func (o *User) GetMatch(id int) (Match, error) {
-    for _, element := range o.Matches {
-        if (element.ID == id) {
-            return element, nil
-        }
-    }
+	for _, element := range o.Matches {
+		if element.ID == id {
+			return element, nil
+		}
+	}
 
-    return Match {}, errors.New("user: could not find Match with provided ID")
+	return Match{}, errors.New("could not find Match with provided ID")
 }
 
 // GetMatchIndex returns the index of the Match with the given ID if the
 // User has one.
 func (o *User) GetMatchIndex(id int) (int, error) {
-    for index, element := range o.Matches {
-        if (element.ID == id) {
-            return index, nil
-        }
-    }
+	for index, element := range o.Matches {
+		if element.ID == id {
+			return index, nil
+		}
+	}
 
-    return -1, errors.New("user: could not find Match with provided ID")
+	return -1, errors.New("could not find Match with provided ID")
 }
 
-var gDemoUsers = []User {
-    User {
-        ID: 0,
-        Name: "Samson",
-        Age: 26,
-        Interests: map[string]int { "Swimming": 2, "Running": 5 },
-        Tags: []string{ "friends_men", "friends_women" },
-        Bio: "I'm a pretty cool person.",
-        Images: []string { "img/samples/sam1.jpg", "img/samples/sam2.jpg", "img/samples/sam3.jpg" },
-        Matches: []Match {
-            Match { ID: 0, Participants: []int { 0, 1 }, Messages: []Message { Message { ID: 4003, AuthorID: 0, Message: "Hey man!", Date: "2017-04-17 13:13:09.084228157 -0700 PDT" }, Message { ID: 4004, AuthorID: 1, Message: "Whatup?", Date: "2017-04-17 14:13:09.084228157 -0700 PDT" } } },
-            Match { ID: 1, Participants: []int { 0, 2 }, Messages: []Message { Message { ID: 4035, AuthorID: 2, Message: "Yo!", Date: "2017-04-17 13:13:09.084228157 -0700 PDT" }, Message { ID: 4046, AuthorID: 0, Message: "Want to go hiking?", Date: "2017-04-17 14:13:09.084228157 -0700 PDT" } } },
-        },
-        Latitude: 47.6062,
-        Longitude: -122.3321,
-        LastActive: "2017-02-15T11:47:26.371Z",
-    },
-    User {
-        ID: 1,
-        Name: "Titus",
-        Age: 24,
-        Interests: map[string]int { "Hiking": 2, "Lifting": 5 },
-        Tags: []string{ "friends_men", "friends_women", "dates_women" },
-        Bio: "I'm an even cooler person.",
-        Images: []string { "img/samples/evan1.jpg" },
-        Matches: []Match { },
-        Latitude: 47.6062,
-        Longitude: -122.3321,
-        LastActive: "2017-01-15T11:47:26.371Z",
-    },
-    User {
-        ID: 2,
-        Name: "Annie",
-        Age: 22,
-        Interests: map[string]int { "Snorkeling": 2, "Climbing": 5 },
-        Tags: []string{ "friends_men", "friends_women", "dates_men" },
-        Bio: "My hair is blond.",
-        Images: []string { "http://lorempixel.com/output/people-q-c-100-100-9.jpg" },
-        Matches: []Match { },
-        Latitude: 47.6062,
-        Longitude: -122.3321,
-        LastActive: "2017-01-15T11:47:26.371Z",
-    },
+// IsMatchedWith returns whether the User is currently matched with the User
+// with the provided ID.
+func (o *User) IsMatchedWith(userID int) bool {
+	for _, element := range o.Matches {
+		for value := range element.Participants {
+			if value == userID {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
-// GetUser returns the User with the given ID if they exist.
-func GetUser(id int) (User, error) {
-    for _, element := range gDemoUsers {
-        if (element.ID == id) {
-            return element, nil
-        }
-    }
+// Push updates the User object in the database with its current local
+// representation.
+func (o *User) Push() error {
+	// Update the User in the database
+	c := gDatabase.db.DB(dbDB).C("users")
+	query := bson.M{"id": o.ID}
+	change := bson.M{"$set": o}
+	err := c.Update(query, change)
 
-    return User {}, errors.New("user: could not find User with provided ID")
+	return err
+}
+
+// PullMatches updates the local User object with all of the actual Matches
+// between the given User and other Users.
+func (o *User) PullMatches() error {
+	var likes []Like
+	var like Like
+
+	// Switch to the "likes" collection
+	c := gDatabase.db.DB(dbDB).C("likes")
+
+	// Retrieve all likes of the User
+	if err := c.Find(bson.M{"likee_id": o.ID}).All(&likes); err != nil {
+		return errors.New("failed to retrieve Matches")
+	}
+
+	// Clear out the local cache of the User's Matches so that we can rebuild
+	// it (NOTE: This sucks and is terribly inefficient. One day, if we aren't
+	// lazy or exhausted, we should change how all of this works.)
+	o.Matches = o.Matches[:0]
+
+	// Figure out which ones are from Users that the User likes back
+	for _, element := range likes {
+		if err := c.Find(bson.M{"liker_id": o.ID, "likee_id": element.LikerID}).One(&like); err != nil {
+			return errors.New("could not retrieve Match")
+		}
+
+		// Construct a new Match for the located likes and append it to the
+		// User's slice of Matches
+		o.Matches = append(o.Matches, Match{ID: len(o.Matches), Participants: []int{o.ID, element.LikerID}})
+	}
+
+	return nil
+}
+
+// DistanceFrom returns the distance that the User is from the specified
+// position. (TODO: This is a dumb algorithm calculated based on a flat plane.
+// The actual app currently uses an algorithm that takes the curvature of the
+// earth into account. We should switch this function to use that algorithm.)
+func (o *User) DistanceFrom(latitude float32, longitude float32) float32 {
+	x := math.Pow((float64)(latitude-o.Latitude), 2)
+	y := math.Pow((float64)(longitude-o.Longitude), 2)
+
+	return (float32)(math.Sqrt(x + y))
+}
+
+// GetUser retrieves a copy of the User with the specified ID, along with their
+// associated UserCache index. If the User is not currently in the UserCache,
+// they are retrieved from the database and put into it. If no User is found,
+// an error is returned.
+func (o *UserCache) GetUser(userID int) (User, int, error) {
+	// Check the cache first to see if we already have a local copy of the User
+	for index, element := range gUserCache.Users {
+		if element.ID == userID {
+			return element, index, nil
+		}
+	}
+
+	// If not in the cache, check the database
+	var user User
+
+	c := gDatabase.db.DB(dbDB).C("users")
+	if err := c.Find(bson.M{"id": userID}).One(&user); err != nil {
+		return User{}, -1, errors.New("could not find User with provided ID")
+	}
+
+	gUserCache.Users = append(gUserCache.Users, user)
+
+	return user, (len(gUserCache.Users) - 1), nil
+}
+
+// DeleteUser literally deletes the User with the specified ID from both the
+// local cache and the database. It should be used for account deletion.
+func (o *UserCache) DeleteUser(userID int) error {
+	// Delete User from local cache
+	for index, element := range gUserCache.Users {
+		if element.ID == userID {
+			o.Users = append(o.Users[:index], o.Users[(index+1):]...)
+		}
+	}
+
+	// Delete User from database
+	c := gDatabase.db.DB(dbDB).C("users")
+	if err := c.Remove(bson.M{"id": userID}); err != nil {
+		return errors.New("failed to remove user from database")
+	}
+
+	// Delete all of the User's social media links from database
+	c = gDatabase.db.DB(dbDB).C("fb_links")
+	if err := c.Remove(bson.M{"user_id": userID}); err != nil {
+		return errors.New("failed to remove user's Facebook links from database")
+	}
+
+	// Delete all of the User's sessions from database
+	c = gDatabase.db.DB(dbDB).C("sessions")
+	if err := c.Remove(bson.M{"user_id": userID}); err != nil {
+		return errors.New("failed to remove user's sessions from database")
+	}
+
+	return nil
 }

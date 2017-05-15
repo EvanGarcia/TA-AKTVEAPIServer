@@ -4,14 +4,17 @@
 package main
 
 import (
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2/bson"
 )
 
 // EndpointGETIndex handles the "GET /" API endpoint.
@@ -907,15 +910,51 @@ func EndpointPUTMeImagesID(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if _, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
-	} else if r.FormValue("image_data") == "" {
-		success.Success = false
-		success.Error = "Invalid API call. 'image_data' paramater must be provided in POST data."
 	} else {
-		var _ = vars
-		// (TODO: Actually save the image somewhere and update the database.)
+		_, userCacheIndex, _ := gUserCache.GetUser(userID)
+
+		// Create a new MD5 hasher
+		hasher := md5.New()
+
+		// Retrieve the body content from the HTTP request
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			success.Success = false
+			success.Error = "Failed to proccess HTTP body."
+		}
+
+		// Calculate hash of body content
+		hash := hasher.Sum(body)
+
+		// Create new File struct so we can put it in the database
+		entry := File{
+			ID:     bson.NewObjectId(),
+			Data:   body,
+			Type:   "image/jpeg",
+			Length: len(body),
+			MD5:    hash,
+		}
+
+		// Push the entry into the database
+		c := gDatabase.db.DB(dbDB).C("files")
+		c.Insert(entry)
+
+		// Add the new URL to the User's object and push it to the database
+		// (TODO: You should really delete the previous image from the database
+		// it is getting overwritten.)
+		imageIndex, _ := strconv.Atoi(vars["image_id"])
+		imageURL := (gAPIURL + "/file/" + entry.ID.Hex())
+
+		if (len(gUserCache.Users[userCacheIndex].Images) - 1) < imageIndex {
+			gUserCache.Users[userCacheIndex].Images = append(gUserCache.Users[userCacheIndex].Images, imageURL)
+		} else {
+			gUserCache.Users[userCacheIndex].Images[imageIndex] = imageURL
+		}
+
+		gUserCache.Users[userCacheIndex].Push()
 	}
 
 	// Combine the success and data structs so that they can be returned
@@ -1177,5 +1216,31 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 	// Respond with the JSON-encoded return data
 	if err := json.NewEncoder(w).Encode(returnData); err != nil {
 		panic(err)
+	}
+}
+
+// EndpointGETFileID handles the "GET /file/{file_id}" API endpoint.
+func EndpointGETFileID(w http.ResponseWriter, r *http.Request) {
+	// Retrieve the variables from the endpoint
+	vars := mux.Vars(r)
+
+	// Process the API call
+	{
+		// Switch to the "files" collection
+		c := gDatabase.db.DB(dbDB).C("files")
+
+		// Find the file
+		var file File
+		if err := c.Find(bson.M{"_id": bson.ObjectIdHex(vars["file_id"])}).One(&file); err == nil {
+			// Write the HTTP header for the response
+			w.Header().Set("Content-Type", file.Type)
+			w.Header().Set("Content-Length", strconv.Itoa(file.Length))
+			w.WriteHeader(http.StatusOK)
+
+			// Write the file's data
+			w.Write(file.Data)
+		} else {
+			log.Printf("There was an issue finding the file with the requested ID (%s) in the database.", vars["file_id"])
+		}
 	}
 }

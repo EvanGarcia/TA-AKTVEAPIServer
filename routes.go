@@ -129,4 +129,10 @@ var routes = Routes{
 		"/potentials",
 		EndpointGETPotentials,
 	},
+	Route{
+		"GETFileID",
+		"GET",
+		"/file/{file_id}",
+		EndpointGETFileID,
+	},
 }

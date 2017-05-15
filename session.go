@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"time"
 
 	"gopkg.in/mgo.v2/bson"
 )
@@ -26,6 +27,11 @@ func (o *SessionCache) CheckSession(token string) (int, error) {
 	// Start by looking for the Session in the cache
 	for _, element := range o.Sessions {
 		if element.Token == token {
+			// Update the associated User's last active time
+			_, userCacheIndex, _ := gUserCache.GetUser(element.UserID)
+			gUserCache.Users[userCacheIndex].LastActive = time.Now().String()
+			gUserCache.Users[userCacheIndex].Push()
+
 			return element.UserID, nil
 		}
 	}
@@ -40,6 +46,11 @@ func (o *SessionCache) CheckSession(token string) (int, error) {
 	}
 
 	gSessionCache.Sessions = append(gSessionCache.Sessions, session)
+
+	// Update the associated User's last active time
+	_, userCacheIndex, _ := gUserCache.GetUser(session.UserID)
+	gUserCache.Users[userCacheIndex].LastActive = time.Now().String()
+	gUserCache.Users[userCacheIndex].Push()
 
 	return session.UserID, nil
 }

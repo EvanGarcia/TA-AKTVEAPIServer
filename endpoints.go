@@ -11,9 +11,11 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
+	fb "github.com/huandu/facebook"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -71,37 +73,102 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 		success.Success = false
 		success.Error = "Invalid API call. 'fb_userid' and 'fb_access_token' paramaters are required."
 	} else {
-		// Attempt to get User from the database
 		var m bson.M
+
+		// Attempt to get User from the database
 		c := gDatabase.db.DB(dbDB).C("fb_links")
 		if fbUserID, err := strconv.Atoi(r.FormValue("fb_userid")); err == nil {
-			err := c.Find(bson.M{"fb_user_id": fbUserID}).One(&m)
-			if err != nil {
-				// (TODO: Verify the fb_userid and fb_access_token can be used
-				// to access the Facebook API. If so, create a new User and
-				// associated Facebook Link in the database (and caches). If
-				// not, there is a problem.)
+			if err := c.Find(bson.M{"fb_user_id": fbUserID}).One(&m); err != nil { // If the User is not linked in our database
+				// Try to get the User from Facebook
+				if res, err := fb.Get(("/" + r.FormValue("fb_userid")), fb.Params{
+					"fields":       []string{"first_name", "last_name", "email", "birthday"},
+					"access_token": r.FormValue("fb_access_token"),
+				}); err != nil {
+					success.Success = false
+					success.Error = "Invalid `fb_userid` provided to API call. User does not exist with AKTVE nor Facebook."
+				} else {
+					// Calculate age based on birthday
+					// (NOTE: This is rough...Facebook can only be gauranteed
+					// to give us the year.)
+					age := 18
+					if str, ok := res["birthday"].(string); ok {
+						slashIndex := strings.Index(str, "/")
+						if slashIndex > -1 {
+							str = str[(slashIndex + 1):]
+						}
 
-				success.Success = false
-				success.Error = "Invalid `fb_userid` provided to API call. User does not exist."
-			} else {
-				// (TODO: Verify that the fb_userid and fb_access_token can be
-				// used to access the Facebook API. If so, update the
-				// fb_access_token stored in the database for the User. If not,
-				// there is a problem.)
+						birthdayNumber, _ := strconv.Atoi(str)
+						age = (time.Now().Year() - birthdayNumber)
+					}
 
-				// Update the Facebook Link's access token in the database
-				// (NOTE: We are assuming, at this point, potentially
-				// dangerously, that the User definitely has a valid Facebook
-				// linke with the provided Facebook User ID in the database.)
-				query := bson.M{"fb_user_id": fbUserID}
-				change := bson.M{"$set": bson.M{"fb_access_token": r.FormValue("fb_access_token")}}
-				_ = c.Update(query, change)
+					// Figure out what this User's ID will be
+					c := gDatabase.db.DB(dbDB).C("users")
+					count, _ := c.Count()
 
-				// Create the new Session for the user and return their new API
-				// access token
-				session, _ := gSessionCache.CreateSession(m["user_id"].(int))
-				data.Token = session.Token
+					// Get names
+					firstName := ""
+					lastName := ""
+
+					if str, ok := res["first_name"].(string); ok {
+						firstName = str
+					}
+
+					if str, ok := res["last_name"].(string); ok {
+						lastName = str
+					}
+
+					// Create the new User object
+					user := User{
+						ID:            count,
+						Name:          (firstName + " " + lastName),
+						Age:           age,
+						Interests:     map[string]int{},
+						Tags:          []string{},
+						Bio:           "",
+						Images:        []string{("https://graph.facebook.com/" + r.FormValue("fb_userid") + "/picture?type=large")},
+						Matches:       []Match{},
+						Latitude:      0,
+						Longitude:     0,
+						LastActive:    time.Now().String(),
+						ShareLocation: true,
+					}
+
+					// Insert the User into the database
+					c.Insert(user)
+
+					// Insert the Facebook link for the user into the database
+					c = gDatabase.db.DB(dbDB).C("fb_links")
+					c.Insert(bson.M{"user_id": user.ID, "fb_user_id": fbUserID, "fb_access_token": r.FormValue("fb_access_token")})
+
+					// Create the new Session for the user and return their new API
+					// access token
+					session, _ := gSessionCache.CreateSession(user.ID)
+					data.Token = session.Token
+				}
+			} else { // Otherwise, if the User is linked in our database
+				// Verify that the fb_userid and fb_access_token can be used to
+				// access the Facebook API
+				if _, err := fb.Get(("/" + r.FormValue("fb_userid")), fb.Params{
+					"fields":       []string{"first_name", "last_name", "email", "birthday"},
+					"access_token": r.FormValue("fb_access_token"),
+				}); err == nil {
+					// Update the Facebook Link's access token in the database
+					// (NOTE: We are assuming, at this point, potentially
+					// dangerously, that the User definitely has a valid Facebook
+					// link with the provided Facebook User ID in the database.)
+					c := gDatabase.db.DB(dbDB).C("fb_links")
+					query := bson.M{"fb_user_id": fbUserID}
+					change := bson.M{"$set": bson.M{"fb_access_token": r.FormValue("fb_access_token")}}
+					_ = c.Update(query, change)
+
+					// Create the new Session for the user and return their new API
+					// access token
+					session, _ := gSessionCache.CreateSession(m["user_id"].(int))
+					data.Token = session.Token
+				} else {
+					success.Success = false
+					success.Error = "Invalid Facebook access token."
+				}
 			}
 		} else {
 			success.Success = false

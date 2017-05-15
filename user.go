@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"math"
 
 	"gopkg.in/mgo.v2/bson"
 )
@@ -53,6 +54,20 @@ func (o *User) GetMatchIndex(id int) (int, error) {
 	return -1, errors.New("could not find Match with provided ID")
 }
 
+// IsMatchedWith returns whether the User is currently matched with the User
+// with the provided ID.
+func (o *User) IsMatchedWith(userID int) bool {
+	for _, element := range o.Matches {
+		for value := range element.Participants {
+			if value == userID {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // Push updates the User object in the database with its current local
 // representation.
 func (o *User) Push() error {
@@ -96,6 +111,17 @@ func (o *User) PullMatches() error {
 	}
 
 	return nil
+}
+
+// DistanceFrom returns the distance that the User is from the specified
+// position. (TODO: This is a dumb algorithm calculated based on a flat plane.
+// The actual app currently uses an algorithm that takes the curvature of the
+// earth into account. We should switch this function to use that algorithm.)
+func (o *User) DistanceFrom(latitude float32, longitude float32) float32 {
+	x := math.Pow((float64)(latitude-o.Latitude), 2)
+	y := math.Pow((float64)(longitude-o.Longitude), 2)
+
+	return (float32)(math.Sqrt(x + y))
 }
 
 // GetUser retrieves a copy of the User with the specified ID, along with their

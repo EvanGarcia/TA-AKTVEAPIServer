@@ -1098,12 +1098,76 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") == "" {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater is required."
-	} else if _, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
+	} else if userID, err := gSessionCache.CheckSession(r.URL.Query().Get("token")); err != nil {
 		success.Success = false
 		success.Error = "Invalid API call. 'token' paramater must be a valid token."
 	} else {
 		var _ = vars
-		data.PotentialUserIDs = []int{1, 2}
+		var users []User
+		user, userCacheIndex, _ := gUserCache.GetUser(userID)
+
+		// Switch to the "users" collection
+		c := gDatabase.db.DB(dbDB).C("users")
+
+		// Match users based on location, age, interests, and skill levels
+		// (TODO: This algorithm should be worked on and enhanced. It is not
+		// "smart" right now. In the future, if there are no users in the
+		// immediate location, it should look for users slightly farther away
+		// (as an example). We also need to filter on tags (e.g. dating men,
+		// dating women, etc.). We also need distance and age to be
+		// configurable.)
+		{
+			// Initialize the output struct
+			data.PotentialUserIDs = []int{}
+
+			// Calculate the maximumim and minimum longitude and latitude of
+			// the potential users
+			var maxLatitude, minLatitude, maxLongitude, minLongitude float32
+			distance := (float32)(15.0 / 69.0)
+
+			maxLatitude = (user.Latitude + distance)
+			minLatitude = (user.Latitude - distance)
+			maxLongitude = (user.Longitude + distance)
+			minLongitude = (user.Longitude - distance)
+
+			// Calculate the maximum and minimum age
+			years := 10
+
+			maxAge := (user.Age + years)
+			minAge := (user.Age - years)
+
+			// Build up the query and find the potential Users
+			query := bson.M{}
+
+			query["latitude"] = bson.M{"$lte": maxLatitude, "$gte": minLatitude}
+			query["longitude"] = bson.M{"$lte": maxLongitude, "$gte": minLongitude}
+
+			query["age"] = bson.M{"$lte": maxAge, "$gte": minAge}
+
+			queryInterests := []bson.M{}
+			for key := range user.Interests {
+				queryInterests = append(queryInterests, bson.M{"interests." + key: bson.M{"$exists": true}})
+			}
+			query["$or"] = queryInterests
+
+			if err := c.Find(query).All(&users); err == nil {
+				// Update the User's Matches so that we can check against them
+				// so that we don't return potential Users that have already
+				// been successfully matched
+				gUserCache.Users[userCacheIndex].PullMatches()
+
+				// Pack the potential User IDs into the output struct
+				for _, element := range users {
+					// Filter out any Users that are already matched
+					if !gUserCache.Users[userCacheIndex].IsMatchedWith(element.ID) {
+						data.PotentialUserIDs = append(data.PotentialUserIDs, element.ID)
+					}
+				}
+			} else {
+				success.Success = false
+				success.Error = "Failed to find any users."
+			}
+		}
 	}
 
 	// Combine the success and data structs so that they can be returned

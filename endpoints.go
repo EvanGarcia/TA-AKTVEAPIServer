@@ -80,7 +80,7 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 		if fbUserID, err := strconv.Atoi(r.FormValue("fb_userid")); err == nil {
 			if err := c.Find(bson.M{"fb_user_id": fbUserID}).One(&m); err != nil { // If the User is not linked in our database
 				// Try to get the User from Facebook
-				if res, err := fb.Get(("/" + r.FormValue("fb_userid")), fb.Params{
+				if res, err := fb.Get(("/me"), fb.Params{
 					"fields":       []string{"first_name", "last_name", "email", "birthday"},
 					"access_token": r.FormValue("fb_access_token"),
 				}); err != nil {
@@ -148,7 +148,7 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 			} else { // Otherwise, if the User is linked in our database
 				// Verify that the fb_userid and fb_access_token can be used to
 				// access the Facebook API
-				if _, err := fb.Get(("/" + r.FormValue("fb_userid")), fb.Params{
+				if _, err := fb.Get(("/me"), fb.Params{
 					"fields":       []string{"first_name", "last_name", "email", "birthday"},
 					"access_token": r.FormValue("fb_access_token"),
 				}); err == nil {

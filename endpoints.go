@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -30,7 +29,7 @@ func EndpointGETStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// Create the actual data response of the API call
-	data := Status{Name: "AKTVE API Server", Status: "online", Version: 1.0}
+	data := Status{Name: "AKTVE API Server", Status: "online", Version: gAPIVersion}
 	data.Update()
 
 	// Create a success response
@@ -69,29 +68,43 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 	var returnData ReturnData
 
 	// Process the API call
-	if r.FormValue("fb_userid") == "" || r.FormValue("fb_access_token") == "" {
+	fbAccessToken := r.FormValue("fb_access_token")
+
+	if fbAccessToken == "" {
 		success.Success = false
-		success.Error = "Invalid API call. 'fb_userid' and 'fb_access_token' paramaters are required."
+		success.Error = "Invalid API call. 'fb_access_token' paramater is required."
 	} else {
 		var m bson.M
 
-		// Attempt to get User from the database
-		c := gDatabase.db.DB(dbDB).C("fb_links")
-		if fbUserID, err := strconv.Atoi(r.FormValue("fb_userid")); err == nil {
-			if err := c.Find(bson.M{"fb_user_id": fbUserID}).One(&m); err != nil { // If the User is not linked in our database
-				// Try to get the User from Facebook
-				if res, err := fb.Get(("/me"), fb.Params{
-					"fields":       []string{"first_name", "last_name", "email", "birthday"},
-					"access_token": r.FormValue("fb_access_token"),
-				}); err != nil {
-					success.Success = false
-					success.Error = "Invalid `fb_userid` provided to API call. User does not exist with AKTVE nor Facebook."
-				} else {
+		// Try to get the User from Facebook
+		if res, err := fb.Get(("/me"), fb.Params{
+			"fields":       []string{"id", "name", "picture"},
+			"access_token": r.FormValue("fb_access_token"),
+		}); err != nil {
+			success.Success = false
+			success.Error = "Invalid `fb_access_token` provided to API call."
+		} else {
+			// Get the scoped Facebook User ID provided by Facebook itself
+			fbUserID := -1
+			if str, ok := res["id"].(string); ok {
+				if val, err := strconv.Atoi(str); err == nil {
+					fbUserID = val
+				}
+			}
+			if fbUserID == -1 {
+				success.Success = false
+				success.Error = "Could not retrieve scoped Facebook User ID from Facebook."
+			} else {
+				// Attempt to get User from the database
+				c := gDatabase.db.DB(dbDB).C("fb_links")
+				if err := c.Find(bson.M{"fb_user_id": fbUserID}).One(&m); err != nil { // If the User is not linked in our database
 					// Calculate age based on birthday
 					// (NOTE: This is rough...Facebook can only be gauranteed
 					// to give us the year.)
+					// (NOTE: Skip this for now. Getting a user's birthday from
+					// Facebook requires app review.)
 					age := 18
-					if str, ok := res["birthday"].(string); ok {
+					/*if str, ok := res["birthday"].(string); ok {
 						slashIndex := strings.Index(str, "/")
 						if slashIndex > -1 {
 							str = str[(slashIndex + 1):]
@@ -99,33 +112,37 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 
 						birthdayNumber, _ := strconv.Atoi(str)
 						age = (time.Now().Year() - birthdayNumber)
-					}
+					}*/
 
 					// Figure out what this User's ID will be
 					c := gDatabase.db.DB(dbDB).C("users")
 					count, _ := c.Count()
 
-					// Get names
-					firstName := ""
-					lastName := ""
-
-					if str, ok := res["first_name"].(string); ok {
-						firstName = str
+					// Get name
+					name := ""
+					if str, ok := res["name"].(string); ok {
+						name = str
 					}
 
-					if str, ok := res["last_name"].(string); ok {
-						lastName = str
+					// Get profile picture URL
+					profilePictures := []string{}
+					if pictureObject, ok := res["picture"].(map[string]interface{}); ok {
+						if dataObject, ok := pictureObject["data"].(map[string]interface{}); ok {
+							if str, ok := dataObject["url"].(string); ok {
+								profilePictures = append(profilePictures, str)
+							}
+						}
 					}
 
 					// Create the new User object
 					user := User{
 						ID:            count,
-						Name:          (firstName + " " + lastName),
+						Name:          name,
 						Age:           age,
 						Interests:     map[string]int{},
 						Tags:          []string{},
 						Bio:           "",
-						Images:        []string{("https://graph.facebook.com/" + r.FormValue("fb_userid") + "/picture?type=large")},
+						Images:        profilePictures,
 						Matches:       []Match{},
 						Latitude:      0,
 						Longitude:     0,
@@ -144,14 +161,7 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 					// access token
 					session, _ := gSessionCache.CreateSession(user.ID)
 					data.Token = session.Token
-				}
-			} else { // Otherwise, if the User is linked in our database
-				// Verify that the fb_userid and fb_access_token can be used to
-				// access the Facebook API
-				if _, err := fb.Get(("/me"), fb.Params{
-					"fields":       []string{"first_name", "last_name", "email", "birthday"},
-					"access_token": r.FormValue("fb_access_token"),
-				}); err == nil {
+				} else { // Otherwise, if the User is linked in our database
 					// Update the Facebook Link's access token in the database
 					// (NOTE: We are assuming, at this point, potentially
 					// dangerously, that the User definitely has a valid Facebook
@@ -165,14 +175,8 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 					// access token
 					session, _ := gSessionCache.CreateSession(m["user_id"].(int))
 					data.Token = session.Token
-				} else {
-					success.Success = false
-					success.Error = "Invalid Facebook access token."
 				}
 			}
-		} else {
-			success.Success = false
-			success.Error = "Internal API error. Are you sure that `fb_userid` is a valid number?"
 		}
 	}
 

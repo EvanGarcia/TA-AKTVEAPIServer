@@ -497,7 +497,7 @@ func EndpointPUTMe(w http.ResponseWriter, r *http.Request) {
 					}
 				} else if key == "interests" {
 					gUserCache.Users[userCacheIndex].Interests = map[string]int{}
-					_ = json.Unmarshal([]byte(value), &gUserCache.Users[userCacheIndex].Interests)
+					json.Unmarshal([]byte(value), &gUserCache.Users[userCacheIndex].Interests)
 				} else if key == "tags" {
 					gUserCache.Users[userCacheIndex].Tags = []string{}
 					_ = json.Unmarshal([]byte(value), &gUserCache.Users[userCacheIndex].Tags)
@@ -521,7 +521,7 @@ func EndpointPUTMe(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Push the updated local object into the database
-		gUserCache.Users[userID].Push()
+		gUserCache.Users[userCacheIndex].Push()
 	}
 
 	// Combine the success and data structs so that they can be returned

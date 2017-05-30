@@ -717,7 +717,7 @@ func EndpointPOSTMeMatchesIDMessage(w http.ResponseWriter, r *http.Request) {
 				// Create the new message
 				message := Message{
 					ID:           len(gUserCache.Users[userCacheIndex].Matches[index].Messages),
-					AuthorID:     0,
+					AuthorID:     userID,
 					Message:      r.FormValue("message"),
 					Date:         time.Now().String(),
 					Participants: gUserCache.Users[userCacheIndex].Matches[index].Participants,

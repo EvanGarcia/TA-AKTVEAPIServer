@@ -1270,8 +1270,8 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 
 				// Pack the potential User IDs into the output struct
 				for _, element := range users {
-					// Filter out any Users that are already matched
-					if !gUserCache.Users[userCacheIndex].IsMatchedWith(element.ID) {
+					// Filter out any Users that are already matched and filter out self
+					if element.ID != userID && !gUserCache.Users[userCacheIndex].IsMatchedWith(element.ID) {
 						data.PotentialUserIDs = append(data.PotentialUserIDs, element.ID)
 					}
 				}

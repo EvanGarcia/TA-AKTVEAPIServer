@@ -23,7 +23,7 @@ func (o *Match) PullMessages() error {
 	c := gDatabase.db.DB(dbDB).C("messages")
 
 	// Retrieve all Messages from this Match
-	if err := c.Find(bson.M{"participants": o.Participants}).All(&o.Messages); err != nil {
+	if err := c.Find(bson.M{"participants": bson.M{"$all": o.Participants}}).All(&o.Messages); err != nil {
 		return errors.New("failed to retrieve Messages")
 	}
 

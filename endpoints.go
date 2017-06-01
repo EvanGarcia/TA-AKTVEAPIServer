@@ -78,7 +78,7 @@ func EndpointPOSTLogin(w http.ResponseWriter, r *http.Request) {
 
 		// Try to get the User from Facebook
 		if res, err := fb.Get(("/me"), fb.Params{
-			"fields":       []string{"id", "name", "picture"},
+			"fields":       []string{"id", "name", "picture.width(640)"},
 			"access_token": r.FormValue("fb_access_token"),
 		}); err != nil {
 			success.Success = false
@@ -1270,8 +1270,8 @@ func EndpointGETPotentials(w http.ResponseWriter, r *http.Request) {
 
 				// Pack the potential User IDs into the output struct
 				for _, element := range users {
-					// Filter out any Users that are already matched and filter out self
-					if element.ID != userID && !gUserCache.Users[userCacheIndex].IsMatchedWith(element.ID) {
+					// Filter out any Users that are already matched or liked, and filter out self
+					if element.ID != userID && !gUserCache.Users[userCacheIndex].IsMatchedWith(element.ID) && !gUserCache.Users[userCacheIndex].CurrentlyLikes(element.ID) {
 						data.PotentialUserIDs = append(data.PotentialUserIDs, element.ID)
 					}
 				}

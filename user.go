@@ -68,6 +68,17 @@ func (o *User) IsMatchedWith(userID int) bool {
 	return false
 }
 
+// CurrentlyLikes returns whether the User currently already likes the User with
+// the provided ID.
+func (o *User) CurrentlyLikes(userID int) bool {
+	c := gDatabase.db.DB(dbDB).C("likes")
+	if cnt, err := c.Find(bson.M{"liker_id": o.ID, "likee_id": userID}).Count(); err == nil && cnt > 0 {
+		return true
+	}
+
+	return false
+}
+
 // Push updates the User object in the database with its current local
 // representation.
 func (o *User) Push() error {
